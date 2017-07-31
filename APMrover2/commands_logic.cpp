@@ -10,12 +10,7 @@ bool Rover::start_command(const AP_Mission::Mission_Command& cmd)
         DataFlash.Log_Write_Mission_Cmd(mission, cmd);
     }
 
-    // exit immediately if not in AUTO mode
-    if (control_mode != AUTO) {
-        return false;
-    }
-
-    gcs_send_text_fmt(MAV_SEVERITY_INFO, "Executing command ID #%i", cmd.id);
+    gcs().send_text(MAV_SEVERITY_INFO, "Executing command ID #%i", cmd.id);
 
     // remember the course of our next navigation leg
     next_navigation_leg_cd = mission.get_next_ground_course_cd(0);
@@ -130,27 +125,22 @@ bool Rover::start_command(const AP_Mission::Mission_Command& cmd)
 //      we double check that the flight mode is AUTO to avoid the possibility of ap-mission triggering actions while we're not in AUTO mode
 void Rover::exit_mission()
 {
-    if (control_mode == AUTO) {
-        gcs_send_text_fmt(MAV_SEVERITY_NOTICE, "No commands. Can't set AUTO. Setting HOLD");
-        set_mode(HOLD);
-    }
+    gcs().send_text(MAV_SEVERITY_NOTICE, "No commands. Can't set AUTO. Setting HOLD");
+    set_mode(mode_hold);
 }
 
 // verify_command_callback - callback function called from ap-mission at 10hz or higher when a command is being run
 //      we double check that the flight mode is AUTO to avoid the possibility of ap-mission triggering actions while we're not in AUTO mode
 bool Rover::verify_command_callback(const AP_Mission::Mission_Command& cmd)
 {
-    if (control_mode == AUTO) {
-        const bool cmd_complete = verify_command(cmd);
+    const bool cmd_complete = verify_command(cmd);
 
-        // send message to GCS
-        if (cmd_complete) {
-            gcs_send_mission_item_reached_message(cmd.index);
-        }
-
-        return cmd_complete;
+    // send message to GCS
+    if (cmd_complete) {
+        gcs().send_mission_item_reached_message(cmd.index);
     }
-    return false;
+
+    return cmd_complete;
 }
 
 /*******************************************************************************
@@ -203,7 +193,7 @@ bool Rover::verify_command(const AP_Mission::Mission_Command& cmd)
 
     default:
         // error message
-        gcs_send_text_fmt(MAV_SEVERITY_WARNING, "Skipping invalid cmd #%i", cmd.id);
+        gcs().send_text(MAV_SEVERITY_WARNING, "Skipping invalid cmd #%i", cmd.id);
         // return true if we do not recognize the command so that we move on to the next command
         return true;
     }
@@ -215,9 +205,7 @@ bool Rover::verify_command(const AP_Mission::Mission_Command& cmd)
 
 void Rover::do_RTL(void)
 {
-    prev_WP = current_loc;
-    control_mode = RTL;
-    next_WP = home;
+    set_mode(mode_rtl);
 }
 
 void Rover::do_nav_wp(const AP_Mission::Mission_Command& cmd)
@@ -266,7 +254,7 @@ bool Rover::verify_nav_wp(const AP_Mission::Mission_Command& cmd)
         if (loiter_duration > 0) {
             // Check if this is the first time we have reached the waypoint
             if (!previously_reached_wp) {
-                gcs_send_text_fmt(MAV_SEVERITY_INFO, "Reached waypoint #%u. Loiter for %u seconds",
+                gcs().send_text(MAV_SEVERITY_INFO, "Reached waypoint #%u. Loiter for %u seconds",
                         static_cast<uint32_t>(cmd.index),
                         static_cast<uint32_t>(loiter_duration));
                 // record the current time i.e. start timer
@@ -281,7 +269,7 @@ bool Rover::verify_nav_wp(const AP_Mission::Mission_Command& cmd)
                 return false;
             }
         } else {
-            gcs_send_text_fmt(MAV_SEVERITY_INFO, "Reached waypoint #%u. Distance %dm",
+            gcs().send_text(MAV_SEVERITY_INFO, "Reached waypoint #%u. Distance %dm",
                     static_cast<uint32_t>(cmd.index),
                     static_cast<int32_t>(fabsf(get_distance(current_loc, next_WP))));
         }
@@ -301,7 +289,7 @@ bool Rover::verify_nav_wp(const AP_Mission::Mission_Command& cmd)
         prev_WP = current_loc;
         // Check if this is the first time we have reached the waypoint even though we have gone past it
         if (!previously_reached_wp) {
-            gcs_send_text_fmt(MAV_SEVERITY_INFO, "Reached waypoint #%u. Loiter for %u seconds",
+            gcs().send_text(MAV_SEVERITY_INFO, "Reached waypoint #%u. Loiter for %u seconds",
                     static_cast<uint32_t>(cmd.index),
                     static_cast<uint32_t>(loiter_duration));
             // record the current time i.e. start timer
@@ -314,7 +302,7 @@ bool Rover::verify_nav_wp(const AP_Mission::Mission_Command& cmd)
         const float dist_to_wp = get_distance(current_loc, next_WP);
         if (!is_equal(distance_past_wp, dist_to_wp)) {
             distance_past_wp = dist_to_wp;
-            gcs_send_text_fmt(MAV_SEVERITY_INFO, "Passed waypoint #%u. Distance %dm",
+            gcs().send_text(MAV_SEVERITY_INFO, "Passed waypoint #%u. Distance %dm",
                     static_cast<uint32_t>(cmd.index),
                     static_cast<int32_t>(fabsf(distance_past_wp)));
         }
@@ -336,14 +324,14 @@ bool Rover::verify_nav_wp(const AP_Mission::Mission_Command& cmd)
 bool Rover::verify_RTL()
 {
     if (wp_distance <= g.waypoint_radius) {
-        gcs_send_text(MAV_SEVERITY_INFO, "Reached destination");
+        gcs().send_text(MAV_SEVERITY_INFO, "Reached destination");
         rtl_complete = true;
         return true;
     }
 
     // have we gone past the waypoint?
     if (location_passed_point(current_loc, prev_WP, next_WP)) {
-        gcs_send_text_fmt(MAV_SEVERITY_INFO, "Reached destination. Distance away %dm",
+        gcs().send_text(MAV_SEVERITY_INFO, "Reached destination. Distance away %dm",
                 static_cast<int32_t>(fabsf(get_distance(current_loc, next_WP))));
         rtl_complete = true;
         return true;
@@ -365,7 +353,7 @@ bool Rover::verify_loiter_time(const AP_Mission::Mission_Command& cmd)
 {
     const bool result = verify_nav_wp(cmd);
     if (result) {
-        gcs_send_text(MAV_SEVERITY_WARNING, "Finished active loiter\n");
+        gcs().send_text(MAV_SEVERITY_WARNING, "Finished active loiter\n");
         // if we have finished active loitering - turn it off
         active_loiter = false;
     }
@@ -376,33 +364,31 @@ void Rover::nav_set_yaw_speed()
 {
     // if we haven't received a MAV_CMD_NAV_SET_YAW_SPEED message within the last 3 seconds bring the rover to a halt
     if ((millis() - guided_control.msg_time_ms) > 3000) {
-        gcs_send_text(MAV_SEVERITY_WARNING, "NAV_SET_YAW_SPEED not recvd last 3secs, stopping");
-        SRV_Channels::set_output_scaled(SRV_Channel::k_throttle, g.throttle_min.get());
-        SRV_Channels::set_output_scaled(SRV_Channel::k_steering, 0);
-        lateral_acceleration = 0.0f;
+        gcs().send_text(MAV_SEVERITY_WARNING, "NAV_SET_YAW_SPEED not recvd last 3secs, stopping");
+        g2.motors.set_throttle(g.throttle_min.get());
+        g2.motors.set_steering(0.0f);
         return;
     }
 
     const int32_t steering = steerController.get_steering_out_angle_error(guided_control.turn_angle);
-    SRV_Channels::set_output_scaled(SRV_Channel::k_steering, steering);
+    g2.motors.set_steering(steering);
 
     // speed param in the message gives speed as a proportion of cruise speed.
     // 0.5 would set speed to the cruise speed
     // 1 is double the cruise speed.
     const float target_speed = g.speed_cruise * guided_control.target_speed * 2.0f;
-    calc_throttle(target_speed);
+    rover.control_mode->calc_throttle(target_speed);
 
-    Log_Write_GuidedTarget(guided_mode, Vector3f(steering, 0.0f, 0.0f), Vector3f(target_speed, 0.0f, 0.0f));
+    Log_Write_GuidedTarget(rover.mode_guided.guided_mode, Vector3f(steering, 0.0f, 0.0f), Vector3f(target_speed, 0.0f, 0.0f));
 }
 
 void Rover::nav_set_speed()
 {
     // if we haven't received a MAVLINK_MSG_ID_SET_POSITION_TARGET_LOCAL_NED message within the last 3 seconds bring the rover to a halt
     if ((millis() - guided_control.msg_time_ms) > 3000) {
-        gcs_send_text(MAV_SEVERITY_WARNING, "SET_VELOCITY not recvd last 3secs, stopping");
-        SRV_Channels::set_output_scaled(SRV_Channel::k_throttle, g.throttle_min.get());
-        SRV_Channels::set_output_scaled(SRV_Channel::k_steering, 0);
-        lateral_acceleration = 0.0f;
+        gcs().send_text(MAV_SEVERITY_WARNING, "SET_VELOCITY not recvd last 3secs, stopping");
+        g2.motors.set_throttle(g.throttle_min.get());
+        g2.motors.set_steering(0.0f);
         prev_WP = current_loc;
         next_WP = current_loc;
         set_guided_WP(current_loc);  // exit Guided_Velocity to prevent spam
@@ -415,10 +401,10 @@ void Rover::nav_set_speed()
     location_update(next_WP, (steer_value + ahrs.yaw_sensor) * 0.01f, 4.0f);  // put the next wp at 4m forward at steer direction
     nav_controller->update_waypoint(current_loc, next_WP);
 
-    SRV_Channels::set_output_scaled(SRV_Channel::k_steering, steer_value);
-    calc_throttle(guided_control.target_speed);
+    g2.motors.set_steering(steer_value);
+    rover.control_mode->calc_throttle(guided_control.target_speed);
 
-    Log_Write_GuidedTarget(guided_mode, Vector3f(steer_value, 0.0f, 0.0f), Vector3f(guided_control.target_speed, 0.0f, 0.0f));
+    Log_Write_GuidedTarget(rover.mode_guided.guided_mode, Vector3f(steer_value, 0.0f, 0.0f), Vector3f(guided_control.target_speed, 0.0f, 0.0f));
 }
 
 /********************************************************************************/
@@ -459,9 +445,9 @@ void Rover::do_yaw(const AP_Mission::Mission_Command& cmd)
 
     // Calculate the steering to apply base on error calculated
     const int32_t steering = steerController.get_steering_out_angle_error(error_to_target_yaw);
-    SRV_Channels::set_output_scaled(SRV_Channel::k_steering, steering);
+    g2.motors.set_steering(steering);
     next_navigation_leg_cd = condition_value;
-    calc_throttle(g.speed_cruise);
+    control_mode->calc_throttle(g.speed_cruise);
 
     do_auto_rotation = true;
 }
@@ -473,17 +459,17 @@ bool Rover::do_yaw_rotation()
 
     // check if we are within 5 degrees of the target heading
     if (error_to_target_yaw <= 500) {
-        SRV_Channels::set_output_scaled(SRV_Channel::k_steering, 0);  // stop the current rotation
+        g2.motors.set_steering(0.0f);  // stop the current rotation
         condition_value = condition_start;  // reset the condition value to its previous value
-        SRV_Channels::set_output_scaled(SRV_Channel::k_throttle, 0);
+        g2.motors.set_throttle(0.0f);
         next_navigation_leg_cd = mission.get_next_ground_course_cd(0);
         do_auto_rotation = false;
         return true;
     } else {
         // Calculate the steering to apply base on error calculated
         const int32_t steering = steerController.get_steering_out_angle_error(error_to_target_yaw);
-        SRV_Channels::set_output_scaled(SRV_Channel::k_steering, steering);
-        calc_throttle(g.speed_cruise);
+        g2.motors.set_steering(steering);
+        control_mode->calc_throttle(g.speed_cruise);
         do_auto_rotation = true;
         return false;
     }
@@ -530,24 +516,21 @@ void Rover::do_change_speed(const AP_Mission::Mission_Command& cmd)
 {
     if (cmd.content.speed.target_ms > 0.0f) {
         g.speed_cruise.set(cmd.content.speed.target_ms);
-        gcs_send_text_fmt(MAV_SEVERITY_INFO, "Cruise speed: %.1f m/s", static_cast<double>(g.speed_cruise.get()));
+        gcs().send_text(MAV_SEVERITY_INFO, "Cruise speed: %.1f m/s", static_cast<double>(g.speed_cruise.get()));
     }
 
     if (cmd.content.speed.throttle_pct > 0.0f && cmd.content.speed.throttle_pct <= 100.0f) {
         g.throttle_cruise.set(cmd.content.speed.throttle_pct);
-        gcs_send_text_fmt(MAV_SEVERITY_INFO, "Cruise throttle: %.1f", static_cast<double>(g.throttle_cruise.get()));
+        gcs().send_text(MAV_SEVERITY_INFO, "Cruise throttle: %.1f", static_cast<double>(g.throttle_cruise.get()));
     }
 }
 
 void Rover::do_set_home(const AP_Mission::Mission_Command& cmd)
 {
     if (cmd.p1 == 1 && have_position) {
-        init_home();
+        set_home_to_current_location(false);
     } else {
-        ahrs.set_home(cmd.content.location);
-        home_is_set = HOME_SET_NOT_LOCKED;
-        Log_Write_Home_And_Origin();
-        GCS_MAVLINK::send_home_all(cmd.content.location);
+        set_home(cmd.content.location, false);
     }
 }
 
@@ -568,36 +551,12 @@ void Rover::do_digicam_configure(const AP_Mission::Mission_Command& cmd)
 // do_digicam_control Send Digicam Control message with the camera library
 void Rover::do_digicam_control(const AP_Mission::Mission_Command& cmd)
 {
-    if (camera.control(cmd.content.digicam_control.session,
-                       cmd.content.digicam_control.zoom_pos,
-                       cmd.content.digicam_control.zoom_step,
-                       cmd.content.digicam_control.focus_lock,
-                       cmd.content.digicam_control.shooting_cmd,
-                       cmd.content.digicam_control.cmd_id)) {
-        log_picture();
-    }
-}
-
-// do_take_picture - take a picture with the camera library
-void Rover::do_take_picture()
-{
-    camera.trigger_pic(true);
-    log_picture();
-}
-
-// log_picture - log picture taken and send feedback to GCS
-void Rover::log_picture()
-{
-    if (!camera.using_feedback_pin()) {
-        gcs_send_message(MSG_CAMERA_FEEDBACK);
-        if (should_log(MASK_LOG_CAMERA)) {
-            DataFlash.Log_Write_Camera(ahrs, gps, current_loc);
-        }
-    } else {
-        if (should_log(MASK_LOG_CAMERA)) {
-            DataFlash.Log_Write_Trigger(ahrs, gps, current_loc);
-        }
-    }
+    camera.control(cmd.content.digicam_control.session,
+                   cmd.content.digicam_control.zoom_pos,
+                   cmd.content.digicam_control.zoom_step,
+                   cmd.content.digicam_control.focus_lock,
+                   cmd.content.digicam_control.shooting_cmd,
+                   cmd.content.digicam_control.cmd_id);
 }
 
 #endif

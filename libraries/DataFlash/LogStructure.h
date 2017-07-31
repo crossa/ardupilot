@@ -241,6 +241,7 @@ struct PACKED log_EKF1 {
     int16_t gyrX;
     int16_t gyrY;
     int16_t gyrZ;
+    int32_t originHgt;
 };
 
 struct PACKED log_EKF2 {
@@ -442,6 +443,23 @@ struct PACKED log_ekfBodyOdomDebug {
     float velInnovVarX;
     float velInnovVarY;
     float velInnovVarZ;
+};
+
+struct PACKED log_ekfStateVar {
+    LOG_PACKET_HEADER;
+    uint64_t time_us;
+    float v00;
+    float v01;
+    float v02;
+    float v03;
+    float v04;
+    float v05;
+    float v06;
+    float v07;
+    float v08;
+    float v09;
+    float v10;
+    float v11;
 };
 
 struct PACKED log_Cmd {
@@ -772,20 +790,38 @@ struct PACKED log_SbpHealth {
     uint32_t last_iar_num_hypotheses;
 };
 
-struct PACKED log_SbpRAW1 {
+struct PACKED log_SbpRAWH {
     LOG_PACKET_HEADER;
     uint64_t time_us;
     uint16_t msg_type;
     uint16_t sender_id;
+    uint8_t index;
+    uint8_t pages;
     uint8_t msg_len;
-    uint8_t data1[64];
+    uint8_t res;
+    uint8_t data[48];
 };
 
-struct PACKED log_SbpRAW2 {
+struct PACKED log_SbpRAWM {
     LOG_PACKET_HEADER;
     uint64_t time_us;
     uint16_t msg_type;
-    uint8_t data2[192];
+    uint16_t sender_id;
+    uint8_t index;
+    uint8_t pages;
+    uint8_t msg_len;
+    uint8_t res;
+    uint8_t data[104];
+};
+
+struct PACKED log_SbpEvent {
+    LOG_PACKET_HEADER;
+    uint64_t time_us;
+    uint16_t wn;
+    uint32_t tow;
+    int32_t ns_residual;
+    uint8_t level;
+    uint8_t quality;
 };
 
 struct PACKED log_Rally {
@@ -817,6 +853,24 @@ struct PACKED log_Beacon {
     float posx;
     float posy;
     float posz;
+};
+
+// proximity sensor logging
+struct PACKED log_Proximity {
+    LOG_PACKET_HEADER;
+    uint64_t time_us;
+    uint8_t health;
+    float dist0;
+    float dist45;
+    float dist90;
+    float dist135;
+    float dist180;
+    float dist225;
+    float dist270;
+    float dist315;
+    float distup;
+    float closest_angle;
+    float closest_dist;
 };
 
 // #endif // SBP_HW_LOGGING
@@ -946,7 +1000,9 @@ Format characters in the format string for binary log messages
     { LOG_DF_MAV_STATS, sizeof(log_DF_MAV_Stats), \
       "DMS", "IIIIIBBBBBBBBBB",         "TimeMS,N,Dp,RT,RS,Er,Fa,Fmn,Fmx,Pa,Pmn,Pmx,Sa,Smn,Smx" }, \
     { LOG_BEACON_MSG, sizeof(log_Beacon), \
-      "BCN", "QBBfffffff",  "TimeUS,Health,Cnt,D0,D1,D2,D3,PosX,PosY,PosZ" }
+      "BCN", "QBBfffffff",  "TimeUS,Health,Cnt,D0,D1,D2,D3,PosX,PosY,PosZ" }, \
+    { LOG_PROXIMITY_MSG, sizeof(log_Proximity), \
+      "PRX", "QBfffffffffff", "TimeUS,Health,D0,D45,D90,D135,D180,D225,D270,D315,DUp,CAn,CDis" }
 
 // messages for more advanced boards
 #define LOG_EXTRA_STRUCTURES \
@@ -961,7 +1017,7 @@ Format characters in the format string for binary log messages
     { LOG_SIMSTATE_MSG, sizeof(log_AHRS), \
       "SIM","QccCfLLffff","TimeUS,Roll,Pitch,Yaw,Alt,Lat,Lng,Q1,Q2,Q3,Q4" }, \
     { LOG_NKF1_MSG, sizeof(log_EKF1), \
-      "NKF1","QccCfffffffccc","TimeUS,Roll,Pitch,Yaw,VN,VE,VD,dPD,PN,PE,PD,GX,GY,GZ" }, \
+      "NKF1","QccCfffffffccce","TimeUS,Roll,Pitch,Yaw,VN,VE,VD,dPD,PN,PE,PD,GX,GY,GZ,OH" }, \
     { LOG_NKF2_MSG, sizeof(log_NKF2), \
       "NKF2","QbccccchhhhhhB","TimeUS,AZbias,GSX,GSY,GSZ,VWN,VWE,MN,ME,MD,MX,MY,MZ,MI" }, \
     { LOG_NKF3_MSG, sizeof(log_NKF3), \
@@ -971,7 +1027,7 @@ Format characters in the format string for binary log messages
     { LOG_NKF5_MSG, sizeof(log_NKF5), \
       "NKF5","QBhhhcccCCfff","TimeUS,NI,FIX,FIY,AFI,HAGL,offset,RI,rng,Herr,eAng,eVel,ePos" }, \
     { LOG_NKF6_MSG, sizeof(log_EKF1), \
-      "NKF6","QccCfffffffccc","TimeUS,Roll,Pitch,Yaw,VN,VE,VD,dPD,PN,PE,PD,GX,GY,GZ" }, \
+      "NKF6","QccCfffffffccce","TimeUS,Roll,Pitch,Yaw,VN,VE,VD,dPD,PN,PE,PD,GX,GY,GZ,OH" }, \
     { LOG_NKF7_MSG, sizeof(log_NKF2), \
       "NKF7","QbccccchhhhhhB","TimeUS,AZbias,GSX,GSY,GSZ,VWN,VWE,MN,ME,MD,MX,MY,MZ,MI" }, \
     { LOG_NKF8_MSG, sizeof(log_NKF3), \
@@ -983,7 +1039,7 @@ Format characters in the format string for binary log messages
     { LOG_NKQ1_MSG, sizeof(log_Quaternion), "NKQ1", QUAT_FMT, QUAT_LABELS }, \
     { LOG_NKQ2_MSG, sizeof(log_Quaternion), "NKQ2", QUAT_FMT, QUAT_LABELS }, \
     { LOG_XKF1_MSG, sizeof(log_EKF1), \
-      "XKF1","QccCfffffffccc","TimeUS,Roll,Pitch,Yaw,VN,VE,VD,dPD,PN,PE,PD,GX,GY,GZ" }, \
+      "XKF1","QccCfffffffccce","TimeUS,Roll,Pitch,Yaw,VN,VE,VD,dPD,PN,PE,PD,GX,GY,GZ,OH" }, \
     { LOG_XKF2_MSG, sizeof(log_NKF2a), \
       "XKF2","QccccchhhhhhB","TimeUS,AX,AY,AZ,VWN,VWE,MN,ME,MD,MX,MY,MZ,MI" }, \
     { LOG_XKF3_MSG, sizeof(log_NKF3), \
@@ -993,7 +1049,7 @@ Format characters in the format string for binary log messages
     { LOG_XKF5_MSG, sizeof(log_NKF5), \
       "XKF5","QBhhhcccCCfff","TimeUS,NI,FIX,FIY,AFI,HAGL,offset,RI,rng,Herr,eAng,eVel,ePos" }, \
     { LOG_XKF6_MSG, sizeof(log_EKF1), \
-      "XKF6","QccCfffffffccc","TimeUS,Roll,Pitch,Yaw,VN,VE,VD,dPD,PN,PE,PD,GX,GY,GZ" }, \
+      "XKF6","QccCfffffffccce","TimeUS,Roll,Pitch,Yaw,VN,VE,VD,dPD,PN,PE,PD,GX,GY,GZ,OH" }, \
     { LOG_XKF7_MSG, sizeof(log_NKF2a), \
       "XKF7","QccccchhhhhhB","TimeUS,AX,AY,AZ,VWN,VWE,MN,ME,MD,MX,MY,MZ,MI" }, \
     { LOG_XKF8_MSG, sizeof(log_NKF3), \
@@ -1006,6 +1062,10 @@ Format characters in the format string for binary log messages
     { LOG_XKQ2_MSG, sizeof(log_Quaternion), "XKQ2", QUAT_FMT, QUAT_LABELS }, \
     { LOG_XKFD_MSG, sizeof(log_ekfBodyOdomDebug), \
       "XKFD","Qffffff","TimeUS,IX,IY,IZ,IVX,IVY,IVZ" }, \
+    { LOG_XKV1_MSG, sizeof(log_ekfStateVar), \
+      "XKV1","Qffffffffffff","TimeUS,V00,V01,V02,V03,V04,V05,V06,V07,V08,V09,V10,V11" }, \
+    { LOG_XKV2_MSG, sizeof(log_ekfStateVar), \
+      "XKV2","Qffffffffffff","TimeUS,V12,V13,V14,V15,V16,V17,V18,V19,V20,V21,V22,V23" }, \
     { LOG_TERRAIN_MSG, sizeof(log_TERRAIN), \
       "TERR","QBLLHffHH","TimeUS,Status,Lat,Lng,Spacing,TerrH,CHeight,Pending,Loaded" }, \
     { LOG_GPS_UBX1_MSG, sizeof(log_Ubx1), \
@@ -1100,11 +1160,13 @@ Format characters in the format string for binary log messages
 // #if SBP_HW_LOGGING
 #define LOG_SBP_STRUCTURES \
     { LOG_MSG_SBPHEALTH, sizeof(log_SbpHealth), \
-      "SBPH", "QIII",   "TimeUS,CrcError,LastInject,IARhyp" }, \
-    { LOG_MSG_SBPRAW1, sizeof(log_SbpRAW1), \
-      "SBR1", "QHHBZ",      "TimeUS,msg_type,sender_id,msg_len,d1" }, \
-    { LOG_MSG_SBPRAW2, sizeof(log_SbpRAW2), \
-      "SBR2", "QHZZZ",      "TimeUS,msg_type,d2,d3,d4" }
+      "SBPH", "QIII", "TimeUS,CrcError,LastInject,IARhyp" }, \
+    { LOG_MSG_SBPRAWH, sizeof(log_SbpRAWH), \
+      "SBRH", "QQQQQQQQ", "TimeUS,msg_flag,1,2,3,4,5,6" }, \
+    { LOG_MSG_SBPRAWM, sizeof(log_SbpRAWM), \
+      "SBRM", "QQQQQQQQQQQQQQQ", "TimeUS,msg_flag,1,2,3,4,5,6,7,8,9,10,11,12,13" }, \
+    { LOG_MSG_SBPEVENT, sizeof(log_SbpEvent), \
+      "SBRE", "QHIiBB", "TimeUS,GWk,GMS,ns_residual,level,quality" }
 // #endif
 
 #define LOG_COMMON_STRUCTURES LOG_BASE_STRUCTURES, LOG_EXTRA_STRUCTURES, LOG_SBP_STRUCTURES
@@ -1210,6 +1272,8 @@ enum LogMessages {
     LOG_XKQ1_MSG,
     LOG_XKQ2_MSG,
     LOG_XKFD_MSG,
+    LOG_XKV1_MSG,
+    LOG_XKV2_MSG,
     LOG_DF_MAV_STATS,
 
     LOG_MSG_SBPHEALTH,
@@ -1217,9 +1281,9 @@ enum LogMessages {
     LOG_MSG_SBPBASELINE,
     LOG_MSG_SBPTRACKING1,
     LOG_MSG_SBPTRACKING2,
-    LOG_MSG_SBPRAW1,
-    LOG_MSG_SBPRAW2,
-    LOG_MSG_SBPRAWx,
+    LOG_MSG_SBPRAWH,
+    LOG_MSG_SBPRAWM,
+    LOG_MSG_SBPEVENT,
     LOG_TRIGGER_MSG,
 
     LOG_GIMBAL1_MSG,
@@ -1230,6 +1294,7 @@ enum LogMessages {
     LOG_VISUALODOM_MSG,
     LOG_AOA_SSA_MSG,
     LOG_BEACON_MSG,
+    LOG_PROXIMITY_MSG,
 };
 
 enum LogOriginType {

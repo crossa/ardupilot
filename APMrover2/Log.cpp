@@ -43,7 +43,7 @@ bool Rover::print_log_menu(void)
         PLOG(IMU);
         PLOG(CMD);
         PLOG(CURRENT);
-        PLOG(SONAR);
+        PLOG(RANGEFINDER);
         PLOG(COMPASS);
         PLOG(CAMERA);
         PLOG(STEERING);
@@ -85,9 +85,9 @@ int8_t Rover::dump_log(uint8_t argc, const Menu::arg *argv)
 
 int8_t Rover::erase_logs(uint8_t argc, const Menu::arg *argv)
 {
-    in_mavlink_delay = true;
+    DataFlash.EnableWrites(false);
     do_erase_logs();
-    in_mavlink_delay = false;
+    DataFlash.EnableWrites(true);
     return 0;
 }
 
@@ -120,7 +120,7 @@ int8_t Rover::select_logs(uint8_t argc, const Menu::arg *argv)
         TARG(IMU);
         TARG(CMD);
         TARG(CURRENT);
-        TARG(SONAR);
+        TARG(RANGEFINDER);
         TARG(COMPASS);
         TARG(CAMERA);
         TARG(STEERING);
@@ -197,7 +197,7 @@ void Rover::Log_Write_Steering()
     struct log_Steering pkt = {
         LOG_PACKET_HEADER_INIT(LOG_STEERING_MSG),
         time_us        : AP_HAL::micros64(),
-        demanded_accel : lateral_acceleration,
+        demanded_accel : control_mode->lateral_acceleration,
         achieved_accel : ahrs.groundspeed() * ins.get_gyro().z,
     };
     DataFlash.WriteBlock(&pkt, sizeof(pkt));
@@ -248,10 +248,10 @@ void Rover::Log_Write_Control_Tuning()
     struct log_Control_Tuning pkt = {
         LOG_PACKET_HEADER_INIT(LOG_CTUN_MSG),
         time_us         : AP_HAL::micros64(),
-        steer_out       : (int16_t)SRV_Channels::get_output_scaled(SRV_Channel::k_steering),
+        steer_out       : (int16_t)g2.motors.get_steering(),
         roll            : (int16_t)ahrs.roll_sensor,
         pitch           : (int16_t)ahrs.pitch_sensor,
-        throttle_out    : (int16_t)SRV_Channels::get_output_scaled(SRV_Channel::k_throttle),
+        throttle_out    : (int16_t)g2.motors.get_throttle(),
         accel_y         : accel.y
     };
     DataFlash.WriteBlock(&pkt, sizeof(pkt));
@@ -278,7 +278,7 @@ void Rover::Log_Write_Nav_Tuning()
         wp_distance         : wp_distance,
         target_bearing_cd   : static_cast<uint16_t>(fabsf(nav_controller->target_bearing_cd())),
         nav_bearing_cd      : static_cast<uint16_t>(fabsf(nav_controller->nav_bearing_cd())),
-        throttle            : static_cast<int8_t>(100 * SRV_Channels::get_output_norm(SRV_Channel::k_throttle)),
+        throttle            : int8_t(SRV_Channels::get_output_scaled(SRV_Channel::k_throttle)),
         xtrack_error        : nav_controller->crosstrack_error()
     };
     DataFlash.WriteBlock(&pkt, sizeof(pkt));
@@ -306,12 +306,12 @@ void Rover::Log_Write_Attitude()
     DataFlash.Log_Write_PID(LOG_PIDA_MSG, g.pidSpeedThrottle.get_pid_info());
 }
 
-struct PACKED log_Sonar {
+struct PACKED log_Rangefinder {
     LOG_PACKET_HEADER;
     uint64_t time_us;
     float    lateral_accel;
-    uint16_t sonar1_distance;
-    uint16_t sonar2_distance;
+    uint16_t rangefinder1_distance;
+    uint16_t rangefinder2_distance;
     uint16_t detected_count;
     int8_t   turn_angle;
     uint16_t turn_time;
@@ -319,24 +319,24 @@ struct PACKED log_Sonar {
     int8_t   throttle;
 };
 
-// Write a sonar packet
-void Rover::Log_Write_Sonar()
+// Write a rangefinder packet
+void Rover::Log_Write_Rangefinder()
 {
     uint16_t turn_time = 0;
     if (!is_zero(obstacle.turn_angle)) {
         turn_time = AP_HAL::millis() - obstacle.detected_time_ms;
     }
-    struct log_Sonar pkt = {
-        LOG_PACKET_HEADER_INIT(LOG_SONAR_MSG),
-        time_us         : AP_HAL::micros64(),
-        lateral_accel   : lateral_acceleration,
-        sonar1_distance : sonar.distance_cm(0),
-        sonar2_distance : sonar.distance_cm(1),
-        detected_count  : obstacle.detected_count,
-        turn_angle      : static_cast<int8_t>(obstacle.turn_angle),
-        turn_time       : turn_time,
-        ground_speed    : static_cast<uint16_t>(fabsf(ground_speed * 100)),
-        throttle        : static_cast<int8_t>(100 * SRV_Channels::get_output_norm(SRV_Channel::k_throttle))
+    struct log_Rangefinder pkt = {
+        LOG_PACKET_HEADER_INIT(LOG_RANGEFINDER_MSG),
+        time_us               : AP_HAL::micros64(),
+        lateral_accel         : control_mode->lateral_acceleration,
+        rangefinder1_distance : rangefinder.distance_cm(0),
+        rangefinder2_distance : rangefinder.distance_cm(1),
+        detected_count        : obstacle.detected_count,
+        turn_angle            : static_cast<int8_t>(obstacle.turn_angle),
+        turn_time             : turn_time,
+        ground_speed          : static_cast<uint16_t>(fabsf(ground_speed * 100.0f)),
+        throttle              : int8_t(SRV_Channels::get_output_scaled(SRV_Channel::k_throttle))
     };
     DataFlash.WriteBlock(&pkt, sizeof(pkt));
 }
@@ -446,6 +446,33 @@ void Rover::Log_Write_GuidedTarget(uint8_t target_type, const Vector3f& pos_targ
     DataFlash.WriteBlock(&pkt, sizeof(pkt));
 }
 
+// wheel encoder packet
+struct PACKED log_WheelEncoder {
+    LOG_PACKET_HEADER;
+    uint64_t time_us;
+    float distance_0;
+    uint8_t quality_0;
+    float distance_1;
+    uint8_t quality_1;
+};
+
+// log wheel encoder information
+void Rover::Log_Write_WheelEncoder()
+{
+    // return immediately if no wheel encoders are enabled
+    if (!g2.wheel_encoder.enabled(0) && !g2.wheel_encoder.enabled(1)) {
+        return;
+    }
+    struct log_WheelEncoder pkt = {
+        LOG_PACKET_HEADER_INIT(LOG_WHEELENCODER_MSG),
+        time_us     : AP_HAL::micros64(),
+        distance_0  : g2.wheel_encoder.get_distance(0),
+        quality_0   : (uint8_t)constrain_float(g2.wheel_encoder.get_signal_quality(0),0.0f,100.0f),
+        distance_1  : g2.wheel_encoder.get_distance(1),
+        quality_1   : (uint8_t)constrain_float(g2.wheel_encoder.get_signal_quality(1),0.0f,100.0f)
+    };
+    DataFlash.WriteBlock(&pkt, sizeof(pkt));
+}
 
 const LogStructure Rover::log_structure[] = {
     LOG_COMMON_STRUCTURES,
@@ -457,8 +484,8 @@ const LogStructure Rover::log_structure[] = {
       "CTUN", "Qhcchf",     "TimeUS,Steer,Roll,Pitch,ThrOut,AccY" },
     { LOG_NTUN_MSG, sizeof(log_Nav_Tuning),
       "NTUN", "QHfHHbf",    "TimeUS,Yaw,WpDist,TargBrg,NavBrg,Thr,XT" },
-    { LOG_SONAR_MSG, sizeof(log_Sonar),
-      "SONR", "QfHHHbHCb",  "TimeUS,LatAcc,S1Dist,S2Dist,DCnt,TAng,TTim,Spd,Thr" },
+    { LOG_RANGEFINDER_MSG, sizeof(log_Rangefinder),
+      "RGFD", "QfHHHbHCb",  "TimeUS,LatAcc,R1Dist,R2Dist,DCnt,TAng,TTim,Spd,Thr" },
     { LOG_ARM_DISARM_MSG, sizeof(log_Arm_Disarm),
       "ARM", "QBH", "TimeUS,ArmState,ArmChecks" },
     { LOG_STEERING_MSG, sizeof(log_Steering),
@@ -467,25 +494,16 @@ const LogStructure Rover::log_structure[] = {
       "GUID",  "QBffffff",    "TimeUS,Type,pX,pY,pZ,vX,vY,vZ" },
     { LOG_ERROR_MSG, sizeof(log_Error),
       "ERR",   "QBB",         "TimeUS,Subsys,ECode" },
+    { LOG_WHEELENCODER_MSG, sizeof(log_WheelEncoder),
+      "WENC",  "Qfbfb",       "TimeUS,Dist0,Qual0,Dist1,Qual1" },
 };
 
 void Rover::log_init(void)
 {
     DataFlash.Init(log_structure, ARRAY_SIZE(log_structure));
-    if (!DataFlash.CardInserted()) {
-        gcs_send_text(MAV_SEVERITY_WARNING, "No dataflash card inserted");
-    } else if (DataFlash.NeedPrep()) {
-        gcs_send_text(MAV_SEVERITY_INFO, "Preparing log system");
-        DataFlash.Prep();
-        gcs_send_text(MAV_SEVERITY_INFO, "Prepared log system");
-        for (uint8_t i=0; i < num_gcs; i++) {
-            gcs_chan[i].reset_cli_timeout();
-        }
-    }
 
-    if (g.log_bitmask != 0) {
-        start_logging();
-    }
+    gcs().reset_cli_timeout();
+
 }
 
 #if CLI_ENABLED == ENABLED
@@ -508,17 +526,9 @@ void Rover::Log_Write_Vehicle_Startup_Messages()
 {
     // only 200(?) bytes are guaranteed by DataFlash
     Log_Write_Startup(TYPE_GROUNDSTART_MSG);
-    DataFlash.Log_Write_Mode(control_mode);
+    DataFlash.Log_Write_Mode(control_mode->mode_number());
     Log_Write_Home_And_Origin();
     gps.Write_DataFlash_Log_Startup_messages();
-}
-
-// start a new log
-void Rover::start_logging()
-{
-    in_mavlink_delay = true;
-    DataFlash.StartNewLog();
-    in_mavlink_delay = false;
 }
 
 #else  // LOGGING_ENABLED
@@ -530,9 +540,8 @@ void Rover::Log_Write_Nav_Tuning() {}
 void Rover::Log_Write_Performance() {}
 int8_t Rover::process_logs(uint8_t argc, const Menu::arg *argv) { return 0; }
 void Rover::Log_Write_Control_Tuning() {}
-void Rover::Log_Write_Sonar() {}
+void Rover::Log_Write_Rangefinder() {}
 void Rover::Log_Write_Attitude() {}
-void Rover::start_logging() {}
 void Rover::Log_Write_RC(void) {}
 void Rover::Log_Write_GuidedTarget(uint8_t target_type, const Vector3f& pos_target, const Vector3f& vel_target) {}
 void Rover::Log_Write_Home_And_Origin() {}
@@ -540,5 +549,6 @@ void Rover::Log_Write_Baro(void) {}
 void Rover::Log_Arm_Disarm() {}
 void Rover::Log_Write_Error(uint8_t sub_system, uint8_t error_code) {}
 void Rover::Log_Write_Steering() {}
+void Rover::Log_Write_WheelEncoder() {}
 
 #endif  // LOGGING_ENABLED

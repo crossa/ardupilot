@@ -60,6 +60,8 @@ public:
         DEVTYPE_AK09916 = 0x09,
         DEVTYPE_IST8310 = 0x0A,
         DEVTYPE_ICM20948 = 0x0B,
+        DEVTYPE_MMC3416 = 0x0C,
+		DEVTYPE_QMC5883L = 0x0D,
     };
 
 

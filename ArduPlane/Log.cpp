@@ -85,9 +85,9 @@ int8_t Plane::dump_log(uint8_t argc, const Menu::arg *argv)
 
 int8_t Plane::erase_logs(uint8_t argc, const Menu::arg *argv)
 {
-    in_mavlink_delay = true;
+    DataFlash.EnableWrites(false);
     do_erase_logs();
-    in_mavlink_delay = false;
+    DataFlash.EnableWrites(true);
     return 0;
 }
 
@@ -148,9 +148,9 @@ int8_t Plane::process_logs(uint8_t argc, const Menu::arg *argv)
 
 void Plane::do_erase_logs(void)
 {
-    gcs_send_text(MAV_SEVERITY_INFO, "Erasing logs");
+    gcs().send_text(MAV_SEVERITY_INFO, "Erasing logs");
     DataFlash.EraseAll();
-    gcs_send_text(MAV_SEVERITY_INFO, "Log erase complete");
+    gcs().send_text(MAV_SEVERITY_INFO, "Log erase complete");
 }
 
 
@@ -558,26 +558,14 @@ void Plane::Log_Write_Vehicle_Startup_Messages()
     gps.Write_DataFlash_Log_Startup_messages();
 }
 
-// start a new log
-void Plane::start_logging() 
-{
-    DataFlash.StartNewLog();
-}
-
 /*
   initialise logging subsystem
  */
 void Plane::log_init(void)
 {
     DataFlash.Init(log_structure, ARRAY_SIZE(log_structure));
-    if (!DataFlash.CardInserted()) {
-        gcs_send_text(MAV_SEVERITY_WARNING, "No dataflash card inserted");
-    } else if (DataFlash.NeedPrep()) {
-        gcs_send_text(MAV_SEVERITY_INFO, "Preparing log system");
-        DataFlash.Prep();
-        gcs_send_text(MAV_SEVERITY_INFO, "Prepared log system");
-        gcs().reset_cli_timeout();
-    }
+
+    gcs().reset_cli_timeout();
 }
 
 #else // LOGGING_ENABLED
@@ -617,7 +605,6 @@ void Plane::Log_Write_Home_And_Origin() {}
 void Plane::Log_Read(uint16_t log_num, int16_t start_page, int16_t end_page) {}
  #endif // CLI_ENABLED
 
-void Plane::start_logging() {}
 void Plane::log_init(void) {}
 
 #endif // LOGGING_ENABLED

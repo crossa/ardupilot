@@ -53,16 +53,16 @@ public:
         k_mount2_tilt           = 13,           ///< mount2 pitch (tilt)
         k_mount2_roll           = 14,           ///< mount2 roll
         k_mount2_open           = 15,           ///< mount2 open (deploy) / close (retract)
-        k_dspoiler1             = 16,           ///< differential spoiler 1 (left wing)
-        k_dspoiler2             = 17,           ///< differential spoiler 2 (right wing)
-        k_aileron_with_input    = 18,            ///< aileron, with rc input
+        k_dspoilerLeft1         = 16,           ///< differential spoiler 1 (left wing)
+        k_dspoilerRight1        = 17,           ///< differential spoiler 1 (right wing)
+        k_aileron_with_input    = 18,            ///< aileron, with rc input, deprecated
         k_elevator              = 19,            ///< elevator
-        k_elevator_with_input   = 20,            ///< elevator, with rc input
+        k_elevator_with_input   = 20,            ///< elevator, with rc input, deprecated
         k_rudder                = 21,            ///< secondary rudder channel
         k_sprayer_pump          = 22,            ///< crop sprayer pump channel
         k_sprayer_spinner       = 23,            ///< crop sprayer spinner channel
-        k_flaperon1             = 24,            ///< flaperon, left wing
-        k_flaperon2             = 25,            ///< flaperon, right wing
+        k_flaperon_left         = 24,            ///< flaperon, left wing
+        k_flaperon_right        = 25,            ///< flaperon, right wing
         k_steering              = 26,            ///< ground steering, used to separate from rudder
         k_parachute_release     = 27,            ///< parachute release
         k_gripper               = 28,            ///< gripper
@@ -114,6 +114,8 @@ public:
         k_motor10               = 83,
         k_motor11               = 84,
         k_motor12               = 85,
+        k_dspoilerLeft2         = 86,           ///< differential spoiler 2 (left wing)
+        k_dspoilerRight2        = 87,           ///< differential spoiler 2 (right wing)
         k_nr_aux_servo_functions         ///< This must be the last enum value (only add new values _before_ this one)
     } Aux_servo_function_t;
 
@@ -180,7 +182,7 @@ private:
 
     // set_range() or set_angle() has been called
     bool type_setup:1;
-    
+
     // the hal channel number
     uint8_t ch_num;
 
@@ -207,7 +209,7 @@ private:
 
     // get normalised output from -1 to 1
     float get_output_norm(void);
-    
+
     // a bitmask type wide enough for NUM_SERVO_CHANNELS
     typedef uint16_t servo_mask_t;
 
@@ -222,7 +224,7 @@ private:
 class SRV_Channels {
 public:
     friend class SRV_Channel;
-    
+
     // constructor
     SRV_Channels(void);
 
@@ -239,7 +241,7 @@ public:
 
     // set output value for a specific function channel as a pwm value
     static void set_output_pwm_chan(uint8_t chan, uint16_t value);
-    
+
     // set output value for a function channel as a scaled value. This
     // calls calc_pwm() to also set the pwm value
     static void set_output_scaled(SRV_Channel::Aux_servo_function_t function, int16_t value);
@@ -286,8 +288,8 @@ public:
     // set output for all channels matching the given function type, allow radio_trim to center servo
     static void set_output_pwm_trimmed(SRV_Channel::Aux_servo_function_t function, int16_t value);
 
-    // set and save the trim for a function channel to radio_in on matching input channel
-    static void set_trim_to_radio_in_for(SRV_Channel::Aux_servo_function_t function);
+    // set and save the trim for a function channel to the output value
+    static void set_trim_to_servo_out_for(SRV_Channel::Aux_servo_function_t function);
 
     // set the trim for a function channel to min of the channel
     static void set_trim_to_min_for(SRV_Channel::Aux_servo_function_t function);
@@ -331,7 +333,7 @@ public:
 
     // enable channels by mask
     static void enable_by_mask(uint16_t mask);
-    
+
     // return the current function for a channel
     static SRV_Channel::Aux_servo_function_t channel_function(uint8_t channel);
 
@@ -355,7 +357,7 @@ public:
 
     // set output refresh frequency on a servo function
     static void set_rc_frequency(SRV_Channel::Aux_servo_function_t function, uint16_t frequency);
-    
+
     // control pass-thru of channels
     void disable_passthrough(bool disable) {
         disabled_passthrough = disable;
@@ -363,7 +365,7 @@ public:
 
     // constrain to output min/max for function
     static void constrain_pwm(SRV_Channel::Aux_servo_function_t function);
-    
+
     // calculate PWM for all channels
     static void calc_pwm(void);
 
@@ -374,19 +376,6 @@ public:
     // upgrade RC* parameters into SERVO* parameters
     static bool upgrade_parameters(const uint8_t old_keys[14], uint16_t aux_channel_mask, RCMapper *rcmap);
     static void upgrade_motors_servo(uint8_t ap_motors_key, uint8_t ap_motors_idx, uint8_t new_channel);
-    
-    static uint32_t get_can_servo_bm(void) {
-        if(p_can_servo_bm != nullptr)
-            return *p_can_servo_bm;
-        else
-            return 0;
-    }
-    static uint32_t get_can_esc_bm(void) {
-        if(p_can_esc_bm != nullptr)
-            return *p_can_esc_bm;
-        else
-            return 0;
-    }
 
 private:
     struct {
@@ -399,9 +388,10 @@ private:
 
     static Bitmask function_mask;
     static bool initialised;
-    
+
     // this static arrangement is to avoid having static objects in AP_Param tables
     static SRV_Channel *channels;
+    static SRV_Channels *instance;
     SRV_Channel obj_channels[NUM_SERVO_CHANNELS];
 
     static struct srv_function {
@@ -413,14 +403,10 @@ private:
     } functions[SRV_Channel::k_nr_aux_servo_functions];
 
     AP_Int8 auto_trim;
+    AP_Int16 default_rate;
 
     // return true if passthrough is disabled
     static bool passthrough_disabled(void) {
         return disabled_passthrough;
     }
-
-    AP_Int32 can_servo_bm;
-    AP_Int32 can_esc_bm;
-    static AP_Int32 *p_can_servo_bm;
-    static AP_Int32 *p_can_esc_bm;
 };
