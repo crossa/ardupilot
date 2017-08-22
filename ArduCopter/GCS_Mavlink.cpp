@@ -10,8 +10,7 @@ void Copter::gcs_send_heartbeat(void)
 
 void Copter::gcs_send_deferred(void)
 {
-    gcs().send_message(MSG_RETRY_DEFERRED);
-    gcs().service_statustext();
+    gcs().retry_deferred();
 }
 
 /*
@@ -123,7 +122,7 @@ NOINLINE void Copter::send_extended_status1(mavlink_channel_t chan)
         control_sensors_present,
         control_sensors_enabled,
         control_sensors_health,
-        (uint16_t)(scheduler.load_average(MAIN_LOOP_MICROS) * 1000),
+        (uint16_t)(scheduler.load_average() * 1000),
         battery.voltage() * 1000, // mV
         battery_current,        // in 10mA units
         battery_remaining,      // in %
@@ -182,14 +181,6 @@ void NOINLINE Copter::send_simstate(mavlink_channel_t chan)
 #endif
 }
 
-void NOINLINE Copter::send_hwstatus(mavlink_channel_t chan)
-{
-    mavlink_msg_hwstatus_send(
-        chan,
-        hal.analogin->board_voltage()*1000,
-        0);
-}
-
 void NOINLINE Copter::send_vfr_hud(mavlink_channel_t chan)
 {
     mavlink_msg_vfr_hud_send(
@@ -200,11 +191,6 @@ void NOINLINE Copter::send_vfr_hud(mavlink_channel_t chan)
         (int16_t)(motors->get_throttle() * 100),
         current_loc.alt / 100.0f,
         climb_rate / 100.0f);
-}
-
-void NOINLINE Copter::send_current_waypoint(mavlink_channel_t chan)
-{
-    mavlink_msg_mission_current_send(chan, mission.get_current_nav_index());
 }
 
 /*
@@ -291,7 +277,7 @@ uint32_t GCS_MAVLINK_Copter::telem_delay() const
     return (uint32_t)(copter.g.telem_delay);
 }
 
-// try to send a message, return false if it won't fit in the serial tx buffer
+// try to send a message, return false if it wasn't sent
 bool GCS_MAVLINK_Copter::try_send_message(enum ap_message id)
 {
     if (telemetry_delayed()) {
@@ -330,11 +316,6 @@ bool GCS_MAVLINK_Copter::try_send_message(enum ap_message id)
         }
         break;
 
-    case MSG_EXTENDED_STATUS2:
-        CHECK_PAYLOAD_SIZE(MEMINFO);
-        send_meminfo();
-        break;
-
     case MSG_ATTITUDE:
         CHECK_PAYLOAD_SIZE(ATTITUDE);
         copter.send_attitude(chan);
@@ -353,14 +334,6 @@ bool GCS_MAVLINK_Copter::try_send_message(enum ap_message id)
     case MSG_NAV_CONTROLLER_OUTPUT:
         CHECK_PAYLOAD_SIZE(NAV_CONTROLLER_OUTPUT);
         copter.send_nav_controller_output(chan);
-        break;
-
-    case MSG_GPS_RAW:
-        return send_gps_raw(copter.gps);
-
-    case MSG_SYSTEM_TIME:
-        CHECK_PAYLOAD_SIZE(SYSTEM_TIME);
-        send_system_time(copter.gps);
         break;
 
     case MSG_RADIO_IN:
@@ -393,21 +366,6 @@ bool GCS_MAVLINK_Copter::try_send_message(enum ap_message id)
         send_sensor_offsets(copter.ins, copter.compass, copter.barometer);
         break;
 
-    case MSG_CURRENT_WAYPOINT:
-        CHECK_PAYLOAD_SIZE(MISSION_CURRENT);
-        copter.send_current_waypoint(chan);
-        break;
-
-    case MSG_NEXT_PARAM:
-        CHECK_PAYLOAD_SIZE(PARAM_VALUE);
-        queued_param_send();
-        break;
-
-    case MSG_NEXT_WAYPOINT:
-        CHECK_PAYLOAD_SIZE(MISSION_REQUEST);
-        queued_waypoint_send();
-        break;
-
     case MSG_RANGEFINDER:
 #if RANGEFINDER_ENABLED == ENABLED
         CHECK_PAYLOAD_SIZE(RANGEFINDER);
@@ -432,13 +390,6 @@ bool GCS_MAVLINK_Copter::try_send_message(enum ap_message id)
 #endif
         break;
 
-    case MSG_CAMERA_FEEDBACK:
-#if CAMERA == ENABLED
-        CHECK_PAYLOAD_SIZE(CAMERA_FEEDBACK);
-        copter.camera.send_feedback(chan);
-#endif
-        break;
-
     case MSG_FENCE_STATUS:
 #if AC_FENCE == ENABLED
         CHECK_PAYLOAD_SIZE(FENCE_STATUS);
@@ -458,11 +409,6 @@ bool GCS_MAVLINK_Copter::try_send_message(enum ap_message id)
 #endif
         CHECK_PAYLOAD_SIZE(AHRS2);
         send_ahrs2(copter.ahrs);
-        break;
-
-    case MSG_HWSTATUS:
-        CHECK_PAYLOAD_SIZE(HWSTATUS);
-        copter.send_hwstatus(chan);
         break;
 
     case MSG_MOUNT_STATUS:
@@ -515,22 +461,6 @@ bool GCS_MAVLINK_Copter::try_send_message(enum ap_message id)
         send_vibration(copter.ins);
         break;
 
-    case MSG_MISSION_ITEM_REACHED:
-        CHECK_PAYLOAD_SIZE(MISSION_ITEM_REACHED);
-        mavlink_msg_mission_item_reached_send(chan, mission_item_reached_index);
-        break;
-
-    case MSG_RETRY_DEFERRED:
-        break; // just here to prevent a warning
-
-    case MSG_MAG_CAL_PROGRESS:
-        copter.compass.send_mag_cal_progress(chan);
-        break;
-
-    case MSG_MAG_CAL_REPORT:
-        copter.compass.send_mag_cal_report(chan);
-        break;
-
     case MSG_ADSB_VEHICLE:
         CHECK_PAYLOAD_SIZE(ADSB_VEHICLE);
         copter.adsb.send_adsb_vehicle(chan);
@@ -538,8 +468,9 @@ bool GCS_MAVLINK_Copter::try_send_message(enum ap_message id)
     case MSG_BATTERY_STATUS:
         send_battery_status(copter.battery);
         break;
+    default:
+        return GCS_MAVLINK::try_send_message(id);
     }
-
     return true;
 }
 
@@ -672,7 +603,10 @@ GCS_MAVLINK_Copter::data_stream_send(void)
         send_message(MSG_EXTENDED_STATUS1); // SYS_STATUS, POWER_STATUS
         send_message(MSG_EXTENDED_STATUS2); // MEMINFO
         send_message(MSG_CURRENT_WAYPOINT);
-        send_message(MSG_GPS_RAW);          // GPS_RAW_INT, GPS_RTK (if available), GPS2_RAW (if available), GPS2_RTK (if available)
+        send_message(MSG_GPS_RAW);
+        send_message(MSG_GPS_RTK);
+        send_message(MSG_GPS2_RAW);
+        send_message(MSG_GPS2_RTK);
         send_message(MSG_NAV_CONTROLLER_OUTPUT);
         send_message(MSG_FENCE_STATUS);
     }
@@ -687,7 +621,6 @@ GCS_MAVLINK_Copter::data_stream_send(void)
     if (copter.gcs_out_of_time) return;
 
     if (stream_trigger(STREAM_RAW_CONTROLLER)) {
-        send_message(MSG_SERVO_OUT);
     }
 
     if (copter.gcs_out_of_time) return;
@@ -778,21 +711,6 @@ void GCS_MAVLINK_Copter::handleMessage(mavlink_message_t* msg)
         if(msg->sysid != copter.g.sysid_my_gcs) break;
         copter.failsafe.last_heartbeat_ms = AP_HAL::millis();
         copter.pmTest1++;
-        break;
-    }
-
-    case MAVLINK_MSG_ID_SET_MODE:       // MAV ID: 11
-    {
-#ifdef DISALLOW_GCS_MODE_CHANGE_DURING_RC_FAILSAFE
-        if (!copter.failsafe.radio) {
-            handle_set_mode(msg, FUNCTOR_BIND(&copter, &Copter::gcs_set_mode, bool, uint8_t));
-        } else {
-            // don't allow mode changes while in radio failsafe
-            mavlink_msg_command_ack_send_buf(msg, chan, MAVLINK_MSG_ID_SET_MODE, MAV_RESULT_FAILED);
-        }
-#else
-        handle_set_mode(msg, FUNCTOR_BIND(&copter, &Copter::gcs_set_mode, bool, uint8_t));
-#endif
         break;
     }
 
@@ -1033,13 +951,6 @@ void GCS_MAVLINK_Copter::handleMessage(mavlink_message_t* msg)
                 if (copter.set_home(new_home_loc, true)) {
                     result = MAV_RESULT_ACCEPTED;
                 }
-            }
-            break;
-
-        case MAV_CMD_DO_FLIGHTTERMINATION:
-            if (packet.param1 > 0.5f) {
-                copter.init_disarm_motors();
-                result = MAV_RESULT_ACCEPTED;
             }
             break;
 
@@ -1647,10 +1558,6 @@ void GCS_MAVLINK_Copter::handleMessage(mavlink_message_t* msg)
         break;
     }
 
-    case MAVLINK_MSG_ID_SERIAL_CONTROL:
-        handle_serial_control(msg, copter.gps);
-        break;
-
 #if PRECISION_LANDING == ENABLED
     case MAVLINK_MSG_ID_LANDING_TARGET:
         result = MAV_RESULT_ACCEPTED;
@@ -1688,16 +1595,6 @@ void GCS_MAVLINK_Copter::handleMessage(mavlink_message_t* msg)
         send_autopilot_version(FIRMWARE_VERSION);
         break;
 
-    case MAVLINK_MSG_ID_LED_CONTROL:
-        // send message to Notify
-        AP_Notify::handle_led_control(msg);
-        break;
-
-    case MAVLINK_MSG_ID_PLAY_TUNE:
-        // send message to Notify
-        AP_Notify::handle_play_tune(msg);
-        break;
-                
     case MAVLINK_MSG_ID_SET_HOME_POSITION:
     {
         mavlink_set_home_position_t packet;
@@ -1836,6 +1733,34 @@ AP_ServoRelayEvents *GCS_MAVLINK_Copter::get_servorelayevents() const
     return &copter.ServoRelayEvents;
 }
 
+AP_AdvancedFailsafe *GCS_MAVLINK_Copter::get_advanced_failsafe() const
+{
+#if ADVANCED_FAILSAFE == ENABLED
+    return &copter.g2.afs;
+#else
+    return nullptr;
+#endif
+}
+
+MAV_RESULT GCS_MAVLINK_Copter::handle_flight_termination(const mavlink_command_long_t &packet) {
+    MAV_RESULT result = MAV_RESULT_FAILED;
+
+#if ADVANCED_FAILSAFE == ENABLED
+    if (GCS_MAVLINK::handle_flight_termination(packet) != MAV_RESULT_ACCEPTED) {
+#endif
+        if (packet.param1 > 0.5f) {
+            copter.init_disarm_motors();
+            result = MAV_RESULT_ACCEPTED;
+        }
+#if ADVANCED_FAILSAFE == ENABLED
+    } else {
+        result = MAV_RESULT_ACCEPTED;
+    }
+#endif
+
+    return result;
+}
+
 AP_Rally *GCS_MAVLINK_Copter::get_rally() const
 {
 #if AC_RALLY == ENABLED
@@ -1843,4 +1768,15 @@ AP_Rally *GCS_MAVLINK_Copter::get_rally() const
 #else
     return nullptr;
 #endif
+}
+
+bool GCS_MAVLINK_Copter::set_mode(const uint8_t mode)
+{
+#ifdef DISALLOW_GCS_MODE_CHANGE_DURING_RC_FAILSAFE
+    if (copter.failsafe.radio) {
+        // don't allow mode changes while in radio failsafe
+        return false;
+    }
+#endif
+    return copter.set_mode((control_mode_t)mode, MODE_REASON_GCS_COMMAND);
 }

@@ -22,6 +22,7 @@ protected:
     AP_ServoRelayEvents *get_servorelayevents() const override { return nullptr; }
 
     uint8_t sysid_my_gcs() const override { return 1; }
+    bool set_mode(uint8_t mode) override { return false; };
 
 };
 
@@ -37,8 +38,6 @@ class GCS_Dummy : public GCS
     uint8_t num_gcs() const override { return 1; }
     GCS_MAVLINK_Dummy &chan(const uint8_t ofs) override { return dummy_backend; }
     const GCS_MAVLINK_Dummy &chan(const uint8_t ofs) const override { return dummy_backend; };
-    bool cli_enabled() const override { return false; }
-    AP_HAL::BetterStream*  cliSerial() { return nullptr; }
 
     void send_statustext(MAV_SEVERITY severity, uint8_t dest_bitmask, const char *text) { hal.console->printf("TOGCS: %s\n", text); }
 };

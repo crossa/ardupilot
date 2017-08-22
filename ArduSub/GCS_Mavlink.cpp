@@ -13,8 +13,7 @@ void Sub::gcs_send_heartbeat(void)
 
 void Sub::gcs_send_deferred(void)
 {
-    gcs().send_message(MSG_RETRY_DEFERRED);
-    gcs().service_statustext();
+    gcs().retry_deferred();
 }
 
 /*
@@ -233,7 +232,7 @@ NOINLINE void Sub::send_extended_status1(mavlink_channel_t chan)
         control_sensors_present,
         control_sensors_enabled,
         control_sensors_health,
-        (uint16_t)(scheduler.load_average(MAIN_LOOP_MICROS) * 1000),
+        (uint16_t)(scheduler.load_average() * 1000),
         battery.voltage() * 1000, // mV
         battery_current,        // in 10mA units
         battery_remaining,      // in %
@@ -293,14 +292,6 @@ void NOINLINE Sub::send_simstate(mavlink_channel_t chan)
 #endif
 }
 
-void NOINLINE Sub::send_hwstatus(mavlink_channel_t chan)
-{
-    mavlink_msg_hwstatus_send(
-        chan,
-        hal.analogin->board_voltage()*1000,
-        0);
-}
-
 void NOINLINE Sub::send_radio_out(mavlink_channel_t chan)
 {
     mavlink_msg_servo_output_raw_send(
@@ -335,11 +326,6 @@ void NOINLINE Sub::send_vfr_hud(mavlink_channel_t chan)
         (int16_t)(motors.get_throttle() * 100),
         current_loc.alt / 100.0f,
         climb_rate / 100.0f);
-}
-
-void NOINLINE Sub::send_current_waypoint(mavlink_channel_t chan)
-{
-    mavlink_msg_mission_current_send(chan, mission.get_current_nav_index());
 }
 
 /*
@@ -469,11 +455,6 @@ bool GCS_MAVLINK_Sub::try_send_message(enum ap_message id)
         }
         break;
 
-    case MSG_EXTENDED_STATUS2:
-        CHECK_PAYLOAD_SIZE(MEMINFO);
-        send_meminfo();
-        break;
-
     case MSG_ATTITUDE:
         CHECK_PAYLOAD_SIZE(ATTITUDE);
         sub.send_attitude(chan);
@@ -492,18 +473,6 @@ bool GCS_MAVLINK_Sub::try_send_message(enum ap_message id)
     case MSG_NAV_CONTROLLER_OUTPUT:
         CHECK_PAYLOAD_SIZE(NAV_CONTROLLER_OUTPUT);
         sub.send_nav_controller_output(chan);
-        break;
-
-    case MSG_GPS_RAW:
-        send_gps_raw(sub.gps);
-        break;
-
-    case MSG_SYSTEM_TIME:
-        CHECK_PAYLOAD_SIZE(SYSTEM_TIME);
-        send_system_time(sub.gps);
-        break;
-
-    case MSG_SERVO_OUT:
         break;
 
     case MSG_RADIO_IN:
@@ -537,21 +506,6 @@ bool GCS_MAVLINK_Sub::try_send_message(enum ap_message id)
         send_sensor_offsets(sub.ins, sub.compass, sub.barometer);
         break;
 
-    case MSG_CURRENT_WAYPOINT:
-        CHECK_PAYLOAD_SIZE(MISSION_CURRENT);
-        sub.send_current_waypoint(chan);
-        break;
-
-    case MSG_NEXT_PARAM:
-        CHECK_PAYLOAD_SIZE(PARAM_VALUE);
-        queued_param_send();
-        break;
-
-    case MSG_NEXT_WAYPOINT:
-        CHECK_PAYLOAD_SIZE(MISSION_REQUEST);
-        queued_waypoint_send();
-        break;
-
     case MSG_RANGEFINDER:
 #if RANGEFINDER_ENABLED == ENABLED
         CHECK_PAYLOAD_SIZE(RANGEFINDER);
@@ -575,13 +529,6 @@ bool GCS_MAVLINK_Sub::try_send_message(enum ap_message id)
 #endif
         break;
 
-    case MSG_CAMERA_FEEDBACK:
-#if CAMERA == ENABLED
-        CHECK_PAYLOAD_SIZE(CAMERA_FEEDBACK);
-        sub.camera.send_feedback(chan);
-#endif
-        break;
-
     case MSG_LIMITS_STATUS:
 #if AC_FENCE == ENABLED
         CHECK_PAYLOAD_SIZE(LIMITS_STATUS);
@@ -601,11 +548,6 @@ bool GCS_MAVLINK_Sub::try_send_message(enum ap_message id)
 #endif
         CHECK_PAYLOAD_SIZE(AHRS2);
         send_ahrs2(sub.ahrs);
-        break;
-
-    case MSG_HWSTATUS:
-        CHECK_PAYLOAD_SIZE(HWSTATUS);
-        sub.send_hwstatus(chan);
         break;
 
     case MSG_MOUNT_STATUS:
@@ -639,14 +581,6 @@ bool GCS_MAVLINK_Sub::try_send_message(enum ap_message id)
         sub.ahrs.send_ekf_status_report(chan);
         break;
 
-    case MSG_FENCE_STATUS:
-    case MSG_WIND:
-    case MSG_POSITION_TARGET_GLOBAL_INT:
-    case MSG_AOA_SSA:
-    case MSG_LANDING:
-        // unused
-        break;
-
     case MSG_PID_TUNING:
         CHECK_PAYLOAD_SIZE(PID_TUNING);
         sub.send_pid_tuning(chan);
@@ -657,27 +591,11 @@ bool GCS_MAVLINK_Sub::try_send_message(enum ap_message id)
         send_vibration(sub.ins);
         break;
 
-    case MSG_MISSION_ITEM_REACHED:
-        CHECK_PAYLOAD_SIZE(MISSION_ITEM_REACHED);
-        mavlink_msg_mission_item_reached_send(chan, mission_item_reached_index);
-        break;
-
-    case MSG_RETRY_DEFERRED:
-        break; // just here to prevent a warning
-
-    case MSG_MAG_CAL_PROGRESS:
-        sub.compass.send_mag_cal_progress(chan);
-        break;
-
-    case MSG_MAG_CAL_REPORT:
-        sub.compass.send_mag_cal_report(chan);
-        break;
-
-    case MSG_ADSB_VEHICLE:
-        break; // Do nothing for Sub, here to prevent warning
     case MSG_BATTERY_STATUS:
         send_battery_status(sub.battery);
         break;
+    default:
+        return GCS_MAVLINK::try_send_message(id);
     }
 
     return true;
@@ -799,6 +717,9 @@ GCS_MAVLINK_Sub::data_stream_send(void)
         send_message(MSG_EXTENDED_STATUS2);
         send_message(MSG_CURRENT_WAYPOINT);
         send_message(MSG_GPS_RAW);
+        send_message(MSG_GPS_RTK);
+        send_message(MSG_GPS2_RAW);
+        send_message(MSG_GPS2_RTK);
         send_message(MSG_NAV_CONTROLLER_OUTPUT);
         send_message(MSG_LIMITS_STATUS);
     }
@@ -817,7 +738,6 @@ GCS_MAVLINK_Sub::data_stream_send(void)
     }
 
     if (stream_trigger(STREAM_RAW_CONTROLLER)) {
-        send_message(MSG_SERVO_OUT);
     }
 
     if (sub.gcs_out_of_time) {
@@ -907,11 +827,6 @@ void GCS_MAVLINK_Sub::handleMessage(mavlink_message_t* msg)
         }
         sub.failsafe.last_heartbeat_ms = AP_HAL::millis();
         sub.pmTest1++;
-        break;
-    }
-
-    case MAVLINK_MSG_ID_SET_MODE: {     // MAV ID: 11
-        handle_set_mode(msg, FUNCTOR_BIND(&sub, &Sub::gcs_set_mode, bool, uint8_t));
         break;
     }
 
@@ -1104,13 +1019,6 @@ void GCS_MAVLINK_Sub::handleMessage(mavlink_message_t* msg)
                         result = MAV_RESULT_ACCEPTED;
                     }
                 }
-            }
-            break;
-
-        case MAV_CMD_DO_FLIGHTTERMINATION:
-            if (packet.param1 > 0.5f) {
-                sub.init_disarm_motors();
-                result = MAV_RESULT_ACCEPTED;
             }
             break;
 
@@ -1517,10 +1425,6 @@ void GCS_MAVLINK_Sub::handleMessage(mavlink_message_t* msg)
         break;
     }
 
-    case MAVLINK_MSG_ID_SERIAL_CONTROL:
-        handle_serial_control(msg, sub.gps);
-        break;
-
 #if AC_FENCE == ENABLED
         // send or receive fence points with GCS
     case MAVLINK_MSG_ID_FENCE_POINT:            // MAV ID: 160
@@ -1549,11 +1453,6 @@ void GCS_MAVLINK_Sub::handleMessage(mavlink_message_t* msg)
 
     case MAVLINK_MSG_ID_AUTOPILOT_VERSION_REQUEST:
         send_autopilot_version(FIRMWARE_VERSION);
-        break;
-
-    case MAVLINK_MSG_ID_LED_CONTROL:
-        // send message to Notify
-        AP_Notify::handle_led_control(msg);
         break;
 
     case MAVLINK_MSG_ID_SET_HOME_POSITION: {
@@ -1688,3 +1587,19 @@ AP_Rally *GCS_MAVLINK_Sub::get_rally() const
     return nullptr;
 #endif
 }
+
+MAV_RESULT GCS_MAVLINK_Sub::handle_flight_termination(const mavlink_command_long_t &packet) {
+    if (packet.param1 > 0.5f) {
+        sub.init_disarm_motors();
+        return MAV_RESULT_ACCEPTED;
+    }
+    return MAV_RESULT_FAILED;
+}
+
+bool GCS_MAVLINK_Sub::set_mode(uint8_t mode)
+{
+    return sub.set_mode((control_mode_t)mode, MODE_REASON_GCS_COMMAND);
+}
+
+// dummy method to avoid linking AFS
+bool AP_AdvancedFailsafe::gcs_terminate(bool should_terminate) { return false; }

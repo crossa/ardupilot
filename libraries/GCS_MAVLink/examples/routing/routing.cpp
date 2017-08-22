@@ -28,6 +28,7 @@ protected:
     AP_GPS *get_gps() const override { return nullptr; };
     AP_Camera *get_camera() const override { return nullptr; };
     uint8_t sysid_my_gcs() const override { return 1; }
+    bool set_mode(uint8_t mode) override { return false; };
 
 private:
 
@@ -122,11 +123,5 @@ void loop(void)
     }
     hal.scheduler->delay(1000);
 }
-
-/* dummy methods to avoid having to link against AP_Camera */
-void AP_Camera::control_msg(mavlink_message_t const*) {}
-void AP_Camera::configure(float, float, float, float, float, float, float) {}
-void AP_Camera::control(float, float, float, float, float, float) {}
-/* end dummy methods to avoid having to link against AP_Camera */
 
 AP_HAL_MAIN();

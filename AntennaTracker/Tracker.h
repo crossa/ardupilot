@@ -199,8 +199,6 @@ private:
     void send_heartbeat(mavlink_channel_t chan);
     void send_attitude(mavlink_channel_t chan);
     void send_location(mavlink_channel_t chan);
-    void send_hwstatus(mavlink_channel_t chan);
-    void send_waypoint_request(mavlink_channel_t chan);
     void send_nav_controller_output(mavlink_channel_t chan);
     void send_simstate(mavlink_channel_t chan);
     void mavlink_check_target(const mavlink_message_t* msg);
@@ -243,7 +241,6 @@ private:
     void disarm_servos();
     void prepare_servos();
     void set_mode(enum ControlMode mode);
-    bool mavlink_set_mode(uint8_t mode);
     void check_usb_mux(void);
     void update_vehicle_pos_estimate();
     void update_tracker_position();
@@ -267,8 +264,6 @@ public:
     void mavlink_snoop(const mavlink_message_t* msg);
     void mavlink_delay_cb();
 };
-
-#define MENU_FUNC(func) FUNCTOR_BIND(&tracker, &Tracker::func, int8_t, uint8_t, const Menu::arg *)
 
 extern const AP_HAL::HAL& hal;
 extern Tracker tracker;

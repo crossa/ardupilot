@@ -155,7 +155,7 @@ void Plane::send_extended_status1(mavlink_channel_t chan)
         control_sensors_present,
         control_sensors_enabled,
         control_sensors_health,
-        (uint16_t)(scheduler.load_average(20000) * 1000),
+        (uint16_t)(scheduler.load_average() * 1000),
         battery.voltage() * 1000, // mV
         battery_current,        // in 10mA units
         battery_remaining,      // in %
@@ -294,14 +294,6 @@ void Plane::send_simstate(mavlink_channel_t chan)
 #endif
 }
 
-void Plane::send_hwstatus(mavlink_channel_t chan)
-{
-    mavlink_msg_hwstatus_send(
-        chan,
-        hal.analogin->board_voltage()*1000,
-        0);
-}
-
 void Plane::send_wind(mavlink_channel_t chan)
 {
     Vector3f wind = ahrs.wind_estimate();
@@ -414,11 +406,6 @@ void Plane::send_pid_tuning(mavlink_channel_t chan)
     }
 }
 
-void Plane::send_current_waypoint(mavlink_channel_t chan)
-{
-    mavlink_msg_mission_current_send(chan, mission.get_current_nav_index());
-}
-
 uint8_t GCS_MAVLINK_Plane::sysid_my_gcs() const
 {
     return plane.g.sysid_my_gcs;
@@ -458,11 +445,6 @@ bool GCS_MAVLINK_Plane::try_send_message(enum ap_message id)
         send_power_status();
         break;
 
-    case MSG_EXTENDED_STATUS2:
-        CHECK_PAYLOAD_SIZE(MEMINFO);
-        send_meminfo();
-        break;
-
     case MSG_ATTITUDE:
         CHECK_PAYLOAD_SIZE(ATTITUDE);
         plane.send_attitude(chan);
@@ -490,16 +472,6 @@ bool GCS_MAVLINK_Plane::try_send_message(enum ap_message id)
             CHECK_PAYLOAD_SIZE(POSITION_TARGET_GLOBAL_INT);
             plane.send_position_target_global_int(chan);
         }
-        break;
-
-    case MSG_GPS_RAW:
-        CHECK_PAYLOAD_SIZE(GPS_RAW_INT);
-        send_gps_raw(plane.gps);
-        break;
-
-    case MSG_SYSTEM_TIME:
-        CHECK_PAYLOAD_SIZE(SYSTEM_TIME);
-        send_system_time(plane.gps);
         break;
 
     case MSG_SERVO_OUT:
@@ -545,21 +517,6 @@ bool GCS_MAVLINK_Plane::try_send_message(enum ap_message id)
         send_sensor_offsets(plane.ins, plane.compass, plane.barometer);
         break;
 
-    case MSG_CURRENT_WAYPOINT:
-        CHECK_PAYLOAD_SIZE(MISSION_CURRENT);
-        plane.send_current_waypoint(chan);
-        break;
-
-    case MSG_NEXT_PARAM:
-        CHECK_PAYLOAD_SIZE(PARAM_VALUE);
-        queued_param_send();
-        break;
-
-    case MSG_NEXT_WAYPOINT:
-        CHECK_PAYLOAD_SIZE(MISSION_REQUEST);
-        queued_waypoint_send();
-        break;
-
     case MSG_FENCE_STATUS:
 #if GEOFENCE_ENABLED == ENABLED
         CHECK_PAYLOAD_SIZE(FENCE_STATUS);
@@ -579,11 +536,6 @@ bool GCS_MAVLINK_Plane::try_send_message(enum ap_message id)
         send_ahrs2(plane.ahrs);
         break;
 
-    case MSG_HWSTATUS:
-        CHECK_PAYLOAD_SIZE(HWSTATUS);
-        plane.send_hwstatus(chan);
-        break;
-
     case MSG_RANGEFINDER:
         CHECK_PAYLOAD_SIZE(RANGEFINDER);
         send_rangefinder_downward(plane.rangefinder);
@@ -595,13 +547,6 @@ bool GCS_MAVLINK_Plane::try_send_message(enum ap_message id)
 #if AP_TERRAIN_AVAILABLE
         CHECK_PAYLOAD_SIZE(TERRAIN_REQUEST);
         plane.terrain.send_request(chan);
-#endif
-        break;
-
-    case MSG_CAMERA_FEEDBACK:
-#if CAMERA == ENABLED
-        CHECK_PAYLOAD_SIZE(CAMERA_FEEDBACK);
-        plane.camera.send_feedback(chan);
 #endif
         break;
 
@@ -645,13 +590,6 @@ bool GCS_MAVLINK_Plane::try_send_message(enum ap_message id)
 #endif
         break;
 
-    case MSG_RETRY_DEFERRED:
-        break; // just here to prevent a warning
-
-    case MSG_LIMITS_STATUS:
-        // unused
-        break;
-
     case MSG_PID_TUNING:
         CHECK_PAYLOAD_SIZE(PID_TUNING);
         plane.send_pid_tuning(chan);
@@ -665,19 +603,6 @@ bool GCS_MAVLINK_Plane::try_send_message(enum ap_message id)
     case MSG_RPM:
         CHECK_PAYLOAD_SIZE(RPM);
         plane.send_rpm(chan);
-        break;
-
-    case MSG_MISSION_ITEM_REACHED:
-        CHECK_PAYLOAD_SIZE(MISSION_ITEM_REACHED);
-        mavlink_msg_mission_item_reached_send(chan, mission_item_reached_index);
-        break;
-
-    case MSG_MAG_CAL_PROGRESS:
-        plane.compass.send_mag_cal_progress(chan);
-        break;
-
-    case MSG_MAG_CAL_REPORT:
-        plane.compass.send_mag_cal_report(chan);
         break;
 
     case MSG_ADSB_VEHICLE:
@@ -694,6 +619,8 @@ bool GCS_MAVLINK_Plane::try_send_message(enum ap_message id)
     case MSG_LANDING:
         plane.landing.send_landing_message(chan);
         break;
+    default:
+        return GCS_MAVLINK::try_send_message(id);
     }
     return true;
 }
@@ -841,6 +768,9 @@ GCS_MAVLINK_Plane::data_stream_send(void)
         send_message(MSG_EXTENDED_STATUS2);
         send_message(MSG_CURRENT_WAYPOINT);
         send_message(MSG_GPS_RAW);
+        send_message(MSG_GPS_RTK);
+        send_message(MSG_GPS2_RAW);
+        send_message(MSG_GPS2_RTK);
         send_message(MSG_NAV_CONTROLLER_OUTPUT);
         send_message(MSG_FENCE_STATUS);
         send_message(MSG_POSITION_TARGET_GLOBAL_INT);
@@ -1467,12 +1397,6 @@ void GCS_MAVLINK_Plane::handleMessage(mavlink_message_t* msg)
         break;
     }
 
-    case MAVLINK_MSG_ID_SET_MODE:
-    {
-        handle_set_mode(msg, FUNCTOR_BIND(&plane, &Plane::mavlink_set_mode, bool, uint8_t));
-        break;
-    }
-
     case MAVLINK_MSG_ID_PARAM_REQUEST_LIST:
     {
         // mark the firmware version in the tlog
@@ -1659,10 +1583,6 @@ void GCS_MAVLINK_Plane::handleMessage(mavlink_message_t* msg)
         break;
     }
 
-    case MAVLINK_MSG_ID_SERIAL_CONTROL:
-        handle_serial_control(msg, plane.gps);
-        break;
-
     case MAVLINK_MSG_ID_DISTANCE_SENSOR:
         plane.rangefinder.handle_msg(msg);
         break;
@@ -1676,16 +1596,6 @@ void GCS_MAVLINK_Plane::handleMessage(mavlink_message_t* msg)
 
     case MAVLINK_MSG_ID_AUTOPILOT_VERSION_REQUEST:
         send_autopilot_version(FIRMWARE_VERSION);
-        break;
-
-    case MAVLINK_MSG_ID_LED_CONTROL:
-        // send message to Notify
-        AP_Notify::handle_led_control(msg);
-        break;
-
-    case MAVLINK_MSG_ID_PLAY_TUNE:
-        // send message to Notify
-        AP_Notify::handle_play_tune(msg);
         break;
 
     case MAVLINK_MSG_ID_SET_ATTITUDE_TARGET:
@@ -1915,8 +1825,7 @@ void Plane::gcs_send_airspeed_calibration(const Vector3f &vg)
  */
 void Plane::gcs_retry_deferred(void)
 {
-    gcs().send_message(MSG_RETRY_DEFERRED);
-    gcs().service_statustext();
+    gcs().retry_deferred();
 }
 
 /*
@@ -1971,7 +1880,44 @@ AP_ServoRelayEvents *GCS_MAVLINK_Plane::get_servorelayevents() const
     return &plane.ServoRelayEvents;
 }
 
+AP_AdvancedFailsafe *GCS_MAVLINK_Plane::get_advanced_failsafe() const
+{
+    return &plane.afs;
+}
+
 AP_Rally *GCS_MAVLINK_Plane::get_rally() const
 {
     return &plane.rally;
 }
+
+/*
+  set_mode() wrapper for MAVLink SET_MODE
+ */
+bool GCS_MAVLINK_Plane::set_mode(const uint8_t mode)
+{
+    switch (mode) {
+    case MANUAL:
+    case CIRCLE:
+    case STABILIZE:
+    case TRAINING:
+    case ACRO:
+    case FLY_BY_WIRE_A:
+    case AUTOTUNE:
+    case FLY_BY_WIRE_B:
+    case CRUISE:
+    case AVOID_ADSB:
+    case GUIDED:
+    case AUTO:
+    case RTL:
+    case LOITER:
+    case QSTABILIZE:
+    case QHOVER:
+    case QLOITER:
+    case QLAND:
+    case QRTL:
+        plane.set_mode((enum FlightMode)mode, MODE_REASON_GCS_COMMAND);
+        return true;
+    }
+    return false;
+}
+

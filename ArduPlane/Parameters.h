@@ -86,9 +86,9 @@ public:
         k_param_takeoff_heading_hold, // unused
         k_param_level_roll_limit,
         k_param_hil_servos,
-        k_param_vtail_output,
+        k_param_vtail_output, // unused
         k_param_nav_controller,
-        k_param_elevon_output,
+        k_param_elevon_output, // unused
         k_param_att_controller,
         k_param_mixing_gain,
         k_param_scheduler,
@@ -134,7 +134,7 @@ public:
         k_param_override_channel,
         k_param_stall_prevention,
         k_param_optflow,
-        k_param_cli_enabled,
+        k_param_cli_enabled_old, // unused - CLI removed
         k_param_trim_rc_at_start,
         k_param_hil_mode,
         k_param_land_disarm_delay,  // unused - moved to AP_Landing
@@ -361,9 +361,6 @@ public:
     AP_Int16 sysid_this_mav;
     AP_Int16 sysid_my_gcs;
     AP_Int8 telem_delay;
-#if CLI_ENABLED == ENABLED
-    AP_Int8 cli_enabled;
-#endif
 
     AP_Float hil_err_limit;
 
@@ -458,8 +455,6 @@ public:
     // Misc
     //
     AP_Int8 auto_trim;
-    AP_Int8 vtail_output;
-    AP_Int8 elevon_output;
     AP_Int8 rudder_only;
     AP_Float mixing_gain;
     AP_Int16 mixing_offset;
@@ -544,6 +539,9 @@ public:
 
     // dual motor tailsitter rudder to differential thrust scaling: 0-100%
     AP_Int8 rudd_dt_gain;
+
+    // mask of channels to do manual pass-thru for
+    AP_Int32 manual_rc_mask;
 };
 
 extern const AP_Param::Info var_info[];

@@ -483,10 +483,8 @@ private:
     void send_location(mavlink_channel_t chan);
     void send_nav_controller_output(mavlink_channel_t chan);
     void send_simstate(mavlink_channel_t chan);
-    void send_hwstatus(mavlink_channel_t chan);
     void send_radio_out(mavlink_channel_t chan);
     void send_vfr_hud(mavlink_channel_t chan);
-    void send_current_waypoint(mavlink_channel_t chan);
 #if RPM_ENABLED == ENABLED
     void send_rpm(mavlink_channel_t chan);
     void rpm_update();
@@ -601,9 +599,6 @@ private:
     void fence_check();
     void fence_send_mavlink_status(mavlink_channel_t chan);
     bool set_mode(control_mode_t mode, mode_reason_t reason);
-    bool gcs_set_mode(uint8_t mode) {
-        return set_mode((control_mode_t)mode, MODE_REASON_GCS_COMMAND);
-    }
     void update_flight_mode();
     void exit_mode(control_mode_t old_control_mode, control_mode_t new_control_mode);
     bool mode_requires_GPS(control_mode_t mode);
